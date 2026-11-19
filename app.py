@@ -52,7 +52,7 @@ if mode == "Today's NYT Puzzle":
         st.error(f"Could not fetch NYT puzzle: {e}")
         st.stop()
 else:
-    col1, col2 = st.columns()
+    col1, col2 = st.columns(2)
     target_letter = col1.text_input("Center Letter", value="t", max_chars=1).lower().strip()
     target_string = col2.text_input("Outer Letters (6)", value="ygloep", max_chars=6).lower().strip()
 
