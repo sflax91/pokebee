@@ -6,7 +6,7 @@ import requests
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="PokéBee")
+st.set_page_config(page_title="PokéBee", page_icon="combee.png")
 st.title("PokéBee")
 st.caption("Fan project, not affiliated with Nintendo, Game Freak, or The New York Times.")
 
