@@ -1,24 +1,50 @@
-import io
+import io, re, json, time
 import requests
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="PokéBee")
-st.title("PokéBee")
+def fetch_from_apify(token):
+    url = "https://jindrich-bar--nyt-games-api.apify.actor/spelling-bee"
+    last_err = None
+    for attempt in range(3):
+        try:
+            r = requests.get(url, params={"token": token}, timeout=30)
+            if r.status_code in (429, 500, 502, 503, 504):
+                raise requests.HTTPError(f"{r.status_code}: {r.text[:200]}")
+            r.raise_for_status()
+            return r.json()
+        except (requests.RequestException, ValueError) as e:
+            last_err = e
+            time.sleep(2 ** attempt)
+    raise RuntimeError(f"Apify failed after 3 tries: {last_err}")
 
-# Fetch today's NYT Spelling Bee letters via Apify
-@st.cache_data(ttl=3600)
+def fetch_from_nyt():
+    # NYT embeds today's puzzle as JSON in the page source
+    r = requests.get(
+        "https://www.nytimes.com/puzzles/spelling-bee",
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=15,
+    )
+    r.raise_for_status()
+    m = re.search(r"window\.gameData\s*=\s*(\{.*?\})</script>", r.text, re.S)
+    if not m:
+        raise RuntimeError("Couldn't find puzzle data in NYT page")
+    today = json.loads(m.group(1))["today"]
+    return {
+        "centerLetter": today["centerLetter"],
+        "outerLetters": today["outerLetters"],
+        "displayDate": today["displayDate"],
+    }
+
+@st.cache_data(ttl=900)
 def fetch_nyt_puzzle(token):
-    subdomain = "jindrich-bar--nyt-games-api"
-    domain = "apify.actor"
-    endpoint = "spelling-bee"
-    url = f"https://{subdomain}.{domain}/{endpoint}"
-    response = requests.get(url, params={"token": token})
-    response.raise_for_status()
-    return response.json()
-
-# Load your Google Sheet of Pokémon names
-@st.cache_data(ttl=86400)
+    try:
+        return fetch_from_apify(token)
+    except Exception as apify_err:
+        try:
+            return fetch_from_nyt()
+        except Exception as nyt_err:
+            raise RuntimeError(f"Apify: {apify_err} | NYT direct: {nyt_err}")
 def load_pokemon():
     sheet_id = "1_SHkcM0Zfb3CRP8tXs0pC8giQQGtRGlynVmz0soLJow"
     sheet_name = "Sheet1"
