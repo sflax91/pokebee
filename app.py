@@ -1,10 +1,21 @@
-import io, re, json, time
+import io
+import re
+import json
+import time
 import requests
 import pandas as pd
 import streamlit as st
 
+st.set_page_config(page_title="PokéBee")
+st.title("PokéBee")
+
+
+# ---------- NYT Spelling Bee fetch (Apify, with direct-NYT fallback) ----------
 def fetch_from_apify(token):
-    url = "https://jindrich-bar--nyt-games-api.apify.actor/spelling-bee"
+    subdomain = "jindrich-bar--nyt-games-api"
+    domain = "apify.actor"
+    endpoint = "spelling-bee"
+    url = f"https://{subdomain}.{domain}/{endpoint}"
     last_err = None
     for attempt in range(3):
         try:
@@ -18,8 +29,8 @@ def fetch_from_apify(token):
             time.sleep(2 ** attempt)
     raise RuntimeError(f"Apify failed after 3 tries: {last_err}")
 
+
 def fetch_from_nyt():
-    # NYT embeds today's puzzle as JSON in the page source
     r = requests.get(
         "https://www.nytimes.com/puzzles/spelling-bee",
         headers={"User-Agent": "Mozilla/5.0"},
@@ -36,6 +47,7 @@ def fetch_from_nyt():
         "displayDate": today["displayDate"],
     }
 
+
 @st.cache_data(ttl=900)
 def fetch_nyt_puzzle(token):
     try:
@@ -45,26 +57,38 @@ def fetch_nyt_puzzle(token):
             return fetch_from_nyt()
         except Exception as nyt_err:
             raise RuntimeError(f"Apify: {apify_err} | NYT direct: {nyt_err}")
+
+
+# ---------- Pokémon list ----------
+@st.cache_data(ttl=86400)
 def load_pokemon():
     sheet_id = "1_SHkcM0Zfb3CRP8tXs0pC8giQQGtRGlynVmz0soLJow"
     sheet_name = "Sheet1"
     host = "docs." + "google.com"
     google_sheet = f"https://{host}/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
-    pokes = pd.read_csv(io.StringIO(requests.get(google_sheet).text))
-    pokes["Name"] = pokes["Name"].str.lower()
-    pokes["Name"] = pokes["Name"].str.replace(r"[^a-zA-Z]", "", regex=True)
+    resp = requests.get(google_sheet, timeout=15)
+    resp.raise_for_status()
+    pokes = pd.read_csv(io.StringIO(resp.text))
+    pokes["strip_name"] = (
+        pokes["Name"].str.lower().str.replace(r"[^a-zA-Z]", "", regex=True)
+    )
     return pokes
 
-def spelling_bee(letter, string, pokes_df):
-    poke_list = []
-    allowed = string + letter
-    for poke in pokes_df["Name"]:
-        if letter in poke:
-            has_extra_letters = any(char not in allowed for char in poke)
-            if not has_extra_letters:
-                poke_list.append(poke)
-    return poke_list
 
+def spelling_bee(letter, string, pokes_df):
+    allowed = set(string + letter)
+    mask = pokes_df["strip_name"].apply(lambda s: letter in s and set(s) <= allowed)
+    out = pokes_df.loc[mask].copy()
+    out["label"] = out["strip_name"].str.upper() + " (" + out["Name"] + ")"
+    return out
+
+
+# Hook for sprites later (assumes the sheet's ID is the national Pokédex number)
+def sprite_url(poke_id):
+    return f"https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/{int(poke_id)}.png"
+
+
+# ---------- UI ----------
 mode = st.radio("Letters:", ["Today's NYT Puzzle", "Custom Letters"], horizontal=True)
 
 if mode == "Today's NYT Puzzle":
@@ -75,7 +99,7 @@ if mode == "Today's NYT Puzzle":
         target_string = "".join(data.get("outerLetters", [])).lower()
         st.caption(f"Date: {data.get('displayDate')}")
     except Exception as e:
-        st.error(f"Could not fetch NYT puzzle: {e}")
+        st.error(f"Could not fetch NYT puzzle: {e}. Try Custom Letters instead.")
         st.stop()
 else:
     col1, col2 = st.columns(2)
@@ -84,12 +108,19 @@ else:
 
 if target_letter and target_string:
     st.subheader(f"Center: **{target_letter.upper()}** | Outer: **{target_string.upper()}**")
-    pokes = load_pokemon()
+    try:
+        pokes = load_pokemon()
+    except Exception as e:
+        st.error(f"Could not load the Pokémon list: {e}")
+        st.stop()
+
     matches = spelling_bee(target_letter, target_string, pokes)
 
-    if len(matches) == 0:
+    if matches.empty:
         st.info("No pokemon matches today :(")
     else:
         st.success(f"Found {len(matches)} Pokémon:")
-        for p in matches:
-            st.write(f"• **{p.capitalize()}**")
+        for _, row in matches.iterrows():
+            c1, c2 = st.columns([1, 6])
+            c1.image(sprite_url(row["ID"]), width=64)
+            c2.write(f"**{row['label']}**")
