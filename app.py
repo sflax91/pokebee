@@ -8,6 +8,7 @@ import streamlit as st
 
 st.set_page_config(page_title="PokéBee")
 st.title("PokéBee")
+st.caption("Fan project, not affiliated with Nintendo, Game Freak, or The New York Times.")
 
 
 # ---------- NYT Spelling Bee fetch (Apify, with direct-NYT fallback) ----------
